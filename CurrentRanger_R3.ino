@@ -19,7 +19,7 @@
 #include <U8g2lib.h>               //https://github.com/olikraus/u8g2/wiki/u8g2reference fonts:https://github.com/olikraus/u8g2/wiki/fntlistall
 //#include <ATSAMD21_ADC.h>
 
-#define FW_VERSION "1.1.6"         //firmware version
+#define FW_VERSION "1.1.6*"         //firmware version
 // ********************** CHANGE LOG ***********************************************************************
 // 1.1.6 - ignore repeated commands for '?'
 // 1.1.5 - FEATURE - NEw USB UI command to reset runtimes settings to default values
@@ -79,7 +79,8 @@
 //***********************************************************************************************************
 #define MODE_MANUAL                 0
 #define MODE_AUTORANGE              1
-#define STARTUP_MODE                MODE_MANUAL //or: MODE_AUTORANGE
+//Start in autoRange mode
+#define STARTUP_MODE                MODE_AUTORANGE //or: MODE_MANUAL
 #define SWITCHDELAY_UP              8 //ms
 #define SWITCHDELAY_DOWN            8 //ms
 #define RANGE_SWITCH_THRESHOLD_HIGH ADC_OVERLOAD //ADC's 12bit value
@@ -133,7 +134,9 @@ uint8_t TOUCH_DEBUG_ENABLED = false;
 uint8_t GPIO_HEADER_RANGING = false;
 uint8_t BT_LOGGING_ENABLED = true;
 uint8_t LOGGING_FORMAT = LOGGING_FORMAT_EXPONENT;
-uint16_t ADC_SAMPLING_SPEED = ADC_SAMPLING_SPEED_AVG;
+//Start in slow mode
+//uint16_t ADC_SAMPLING_SPEED = ADC_SAMPLING_SPEED_AVG;
+uint16_t ADC_SAMPLING_SPEED = ADC_SAMPLING_SPEED_SLOW;
 uint32_t ADC_AVGCTRL;
 uint8_t calibrationPerformed=false;
 uint8_t analog_ref_half=false; //keep false to ensure we set the reference correctly
@@ -206,11 +209,12 @@ void setup() {
   //DAC->CTRLB.bit.REFSEL=0;//pick internal reference, skip SYNCDAC (done by analogWrite)
   analogWrite(A0, DAC_GND_ISO_OFFSET);  // Initialize Dac to OFFSET
 
-  autooff_interval = eeprom_AUTOFF.read();
-  if (autooff_interval==0) {
-    autooff_interval = AUTOOFF_DEFAULT;
-    eeprom_AUTOFF.write(autooff_interval);
-  }
+  autooff_interval = AUTOOFF_DISABLED;
+  //autooff_interval = eeprom_AUTOFF.read();
+  //if (autooff_interval==0) {
+  //  autooff_interval = AUTOOFF_DEFAULT;
+  //  eeprom_AUTOFF.write(autooff_interval);
+  //}
 
   LOGGING_FORMAT = eeprom_LOGGINGFORMAT.read();
 
@@ -239,16 +243,18 @@ void setup() {
   {
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_8x13B_tf);
-    u8g2.setCursor(15,10); u8g2.print("CurrentRanger");  
+    u8g2.setCursor(15,10); u8g2.print("CurrentRanger*");  
     u8g2.setFont(u8g2_font_6x12_tf);
-    u8g2.setCursor(0,20); u8g2.print("Offset:");
+    u8g2.setCursor( 0,20); u8g2.print("Offset:");
     u8g2.setCursor(64,20); u8g2.print(offsetCorrectionValue);
-    u8g2.setCursor(0,32); u8g2.print("Gain  :");
-    u8g2.setCursor(64,32); u8g2.print(gainCorrectionValue);
-    u8g2.setCursor(0,44); u8g2.print("LDO   :");
-    u8g2.setCursor(64,44); u8g2.print(ldoValue,3);
-    u8g2.setCursor(0, 56); u8g2.print("Firmware:");
-    u8g2.setCursor(64,56); u8g2.print(FW_VERSION);
+    u8g2.setCursor( 0,30); u8g2.print("Gain  :");
+    u8g2.setCursor(64,30); u8g2.print(gainCorrectionValue);
+    u8g2.setCursor( 0,40); u8g2.print("LDO   :");
+    u8g2.setCursor(64,40); u8g2.print(ldoValue,3);
+    u8g2.setCursor( 0,50); u8g2.print("Firmware:");
+    u8g2.setCursor(64,50); u8g2.print(FW_VERSION);
+    // Don't let the usr forget this unit won't power off.
+    u8g2.setCursor( 0,60); u8g2.print("AUTO-OFF NEVER!");
     u8g2.sendBuffer();
     delay(2000);
   }
@@ -332,7 +338,9 @@ void loop() {
         Serial.print("new offsetCorrectionValue = ");
         Serial.println(offsetCorrectionValue);
         break;
-      case '/':
+      //? for help and shift ? makes a config change? Use & instead.
+      //case '/':
+      case '&':
         eeprom_ADCoffset.write(--offsetCorrectionValue);
         analogReadCorrection(offsetCorrectionValue,gainCorrectionValue);
         Serial.print("new offsetCorrectionValue = ");
@@ -425,6 +433,25 @@ void loop() {
         }
         eeprom_AUTOFF.write(autooff_interval);
         break;
+
+      case 'A': //Print autoOff function
+        if (autooff_interval == AUTOOFF_DEFAULT)
+        {
+          Serial.println("AUTOOFF_DEFAULT");
+        }
+        else if (autooff_interval == AUTOOFF_SMART) 
+        {
+          Serial.println("AUTOOFF_SMART");
+        } 
+        else if (autooff_interval == AUTOOFF_DISABLED) 
+        {
+          Serial.println("AUTOOFF_DISABLED");
+        }
+        else
+        {
+          Serial.println(autooff_interval);
+        }
+
       case '1': if (AUTORANGE) toggleAutoranging(); rangeMA(); break;
       case '2': if (AUTORANGE) toggleAutoranging(); rangeUA(); break;
       case '3': if (AUTORANGE) toggleAutoranging(); rangeNA(); break;
@@ -477,14 +504,14 @@ void loop() {
     readVOUT();
     //assumes we only auto-range in DC mode (no bias)
     if (readDiff <= RANGE_SWITCH_THRESHOLD_LOW)
-    {
-      if      (RANGE_MA) { rangeUA(); rangeSwitched=true; rangeBeep(SWITCHDELAY_DOWN); }
-      else if (RANGE_UA) { rangeNA(); rangeSwitched=true; rangeBeep(SWITCHDELAY_DOWN); }
+    {                                                     // Don't beep so much when running.
+      if      (RANGE_MA) { rangeUA(); rangeSwitched=true; /*rangeBeep(SWITCHDELAY_DOWN);*/}
+      else if (RANGE_UA) { rangeNA(); rangeSwitched=true; /*rangeBeep(SWITCHDELAY_DOWN);*/}
     }
     else if (readDiff >= RANGE_SWITCH_THRESHOLD_HIGH)
     {
-      if      (RANGE_NA) { rangeUA(); rangeSwitched=true; rangeBeep(SWITCHDELAY_UP); }
-      else if (RANGE_UA) { rangeMA(); rangeSwitched=true; rangeBeep(SWITCHDELAY_UP); }
+      if      (RANGE_NA) { rangeUA(); rangeSwitched=true; /*rangeBeep(SWITCHDELAY_UP);*/ }
+      else if (RANGE_UA) { rangeMA(); rangeSwitched=true; /*rangeBeep(SWITCHDELAY_UP);*/ }
     }
     if (rangeSwitched) {
       lastKeepAlive=millis();
@@ -689,6 +716,8 @@ void rangeNA() {
 }
 
 void handleAutoOff() {
+  //Don't turn off... ever.
+  return;
   uint32_t autooff_deadline = uint32_t((autooff_interval == AUTOOFF_SMART && !(USB_LOGGING_ENABLED || BT_LOGGING_ENABLED))?AUTOOFF_DEFAULT:autooff_interval)*1000;
 
   if (millis() - lastKeepAlive > autooff_deadline - 5*1000) {
@@ -889,6 +918,7 @@ void printSerialMenu() {
   printCalibInfo();
 
   Serial.println("a = cycle Auto-Off function");
+  Serial.println("A = Show Auto-Off");
   Serial.print  ("b = toggle BT/serial logging (");Serial.print(SERIAL_UART_BAUD);Serial.println("baud)");
   Serial.println("f = cycle serial logging formats (exponent,nA,uA,mA/raw-ADC)");
   Serial.println("g = toggle GPIO range indication (SCK=mA,MISO=uA,MOSI=nA)");
@@ -903,7 +933,7 @@ void printSerialMenu() {
   Serial.println("+ = Calibrate GAIN value (+1)");
   Serial.println("- = Calibrate GAIN value (-1)");
   Serial.println("* = Calibrate OFFSET value (+1)");
-  Serial.println("/ = Calibrate OFFSET value (-1)");
+  Serial.println("& = Calibrate OFFSET value (-1)");
   Serial.println("1 = range to MilliAmps (MA)");
   Serial.println("2 = range to MicroAmps (UA)");
   Serial.println("3 = range to NanoAmps (NA)");
